@@ -112,6 +112,19 @@ function parseComponent(content) {
 }
 
 /**
+ * Converts all messages into the pluralized format, even static ones. This is
+ * to simplify the handling of flattening and get a single code path
+ * independently of static/pluralized
+ */
+function ensurePluralizedFormat(message) {
+    if (typeof message === 'string') {
+        return {'': message};
+    }
+
+    return message;
+}
+
+/**
  * Transforms a translations dictionary into flat sheets/rows
  */
 function flattenTrans(trans, sourceLocale) {
@@ -125,12 +138,22 @@ function flattenTrans(trans, sourceLocale) {
             const fileData = localeData[fileName];
 
             for (const key of Object.keys(fileData)) {
-                data[locale].push([
-                    fileName,
-                    key,
-                    trans[sourceLocale][fileName][key],
-                    fileData[key],
-                ]);
+                const message = ensurePluralizedFormat(fileData[key]);
+                const sourceMessage =
+                    ensurePluralizedFormat(trans[sourceLocale][fileName][key]);
+
+                for (const range of Object.keys(sourceMessage)) {
+                    const text = message[range] || sourceMessage[range];
+                    const sourceText = sourceMessage[range];
+
+                    data[locale].push([
+                        fileName,
+                        key,
+                        range,
+                        sourceText,
+                        text,
+                    ]);
+                }
             }
         }
     }

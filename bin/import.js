@@ -52,7 +52,7 @@ function getGoogleContent(config, sheetId) {
                 if (isValid) {
                     deepSet(
                         allTrans,
-                        [row.Component, locale, row.Key],
+                        [row.Component, locale, row.Key, row.Range],
                         row.Translation
                     );
                 }
@@ -65,9 +65,17 @@ function getGoogleContent(config, sheetId) {
             out[component] = [];
 
             for (const locale of Object.keys(allTrans[component])) {
+                const messages = allTrans[component][locale];
+
+                for (const key of Object.keys(messages)) {
+                    if (messages[key][''] !== undefined) {
+                        messages[key] = messages[key][''];
+                    }
+                }
+
                 out[component].push({
                     locale,
-                    messages: allTrans[component][locale],
+                    messages,
                 });
             }
         }

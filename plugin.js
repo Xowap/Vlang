@@ -8,9 +8,9 @@ module.exports = {
 
         Object.assign(vlang, (options || {}));
 
-        t = function (key) {
+        t = function (key, n) {
             const m = this.$options.__messages || [];
-            return vlang.translate(key, m);
+            return vlang.translate(key, m, n);
         };
 
         t.setLang = function (lang) {
