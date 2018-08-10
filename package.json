@@ -1,7 +1,7 @@
 {
     "name": "vlang",
     "description": "An i18n system (and a vue-cli plugin)",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "author": "Rémy Sanchez (@xowap)",
     "license": "WTFPL",
     "main": "plugin.js",
