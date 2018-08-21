@@ -8,6 +8,7 @@ const fs = require('fs');
 const yaml = require('js-yaml');
 const {fail, parseConfig, deepSet, mkdir, vlangPath} = require('../lib/utils');
 const {authorize, dumpData} = require('../lib/google');
+const filtersLib = require('../lib/filters');
 
 /**
  * Parses CLI arguments
@@ -25,6 +26,29 @@ function parseArgs() {
     });
 
     return parser.parseArgs();
+}
+
+/**
+ * Applies locale-related filters to this string, if any is found in the
+ * configuration.
+ *
+ * @param config {object} Un-serialized configuration
+ * @param locale {string} Locale of the message
+ * @param str {string} The message itself
+ */
+function applyFilters(config, locale, str) {
+    if (!config.filters[locale]) {
+        return str;
+    }
+
+    const filters = config.filters[locale].map(x => filtersLib[x]);
+    let out = str;
+
+    for (const filter of filters) {
+        out = filter(out);
+    }
+
+    return out;
 }
 
 /**
@@ -49,11 +73,13 @@ function getGoogleContent(config, sheetId) {
                     && row.Key
                     && row.Component.match(/\.vue$/);
 
+                const trans = applyFilters(config, locale, row.Translation);
+
                 if (isValid) {
                     deepSet(
                         allTrans,
                         [row.Component, locale, row.Key, row.Range],
-                        row.Translation
+                        trans
                     );
                 }
             }
