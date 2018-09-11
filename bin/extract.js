@@ -10,8 +10,16 @@ const fs = require('fs');
 const Entities = require('html-entities').AllHtmlEntities;
 const {authorize, ensureSheets, insertMissingData} = require('../lib/google');
 const {fail, parseConfig, deepSet} = require('../lib/utils');
+const {parseVljs} = require('../lib/parser');
 
 const entities = new Entities();
+
+const IGNORED_DIRS = [
+    '.git',
+    'node_modules',
+    '.idea',
+    '.vscode',
+];
 
 /**
  * Parses CLI arguments
@@ -35,12 +43,24 @@ function parseArgs() {
 /**
  * Goes through all the files inside the root and reads their contents
  */
-function walkFiles(root) {
+function walkFiles(root, extension = 'vue') {
     const files = {};
 
     return new Promise((resolve) => {
         const walker = walk(root, {
             followLinks: false,
+        });
+
+        walker.on('directories', (root, directories, next) => {
+            for (let i = 0; i < directories.length; i += 1) {
+                const dir = directories[i];
+
+                if (IGNORED_DIRS.indexOf(dir.name) >= 0) {
+                    delete directories[i];
+                }
+            }
+
+            next();
         });
 
         walker.on('file', (root, fileStats, next) => {
@@ -84,7 +104,7 @@ function walkFiles(root) {
                 });
             }
 
-            if (fileStats.name.match(/\.vue$/)) {
+            if (fileStats.name.match(new RegExp(`\.${extension}\$`))) {
                 getPath();
             } else {
                 next();
@@ -108,7 +128,7 @@ function parseComponent(content) {
 
     const y = entities.decode(msg.html());
 
-    return yaml.load(y);
+    return yaml.safeLoad(y);
 }
 
 /**
@@ -186,7 +206,8 @@ function main() {
     const args = parseArgs();
     let rootPath;
     let config;
-    let files;
+    let vueFiles;
+    let vljsFiles;
     let srcTrans = {};
     let trans = {};
 
@@ -219,25 +240,34 @@ function main() {
      * Extracts the content of all files
      */
     function walkRoot() {
-        walkFiles(args.root).then((_files) => {
-            files = _files;
-            parseFiles();
-        });
+        Promise.all([
+            walkFiles(args.root, 'vue').then((_files) => {
+                vueFiles = _files;
+            }),
+            walkFiles(args.root, 'js').then((_files) => {
+                vljsFiles = _files;
+            }),
+        ]).then(() => parseFiles());
     }
 
     /**
      * Parses all the files that can be parsed
      */
     function parseFiles() {
-        for (const filePath of Object.keys(files)) {
-            const fileContent = files[filePath];
-            const shortPath = path.relative(rootPath, filePath);
-            const parsed = parseComponent(fileContent);
+        function extract(files, parser) {
+            for (const filePath of Object.keys(files)) {
+                const fileContent = files[filePath];
+                const shortPath = path.relative(rootPath, filePath);
+                const parsed = parser(fileContent);
 
-            if (parsed && shortPath[0] !== '.') {
-                srcTrans[shortPath] = parsed;
+                if (parsed && shortPath[0] !== '.') {
+                    srcTrans[shortPath] = parsed;
+                }
             }
         }
+
+        extract(vueFiles, parseComponent);
+        extract(vljsFiles, parseVljs);
 
         for (const filePath of Object.keys(srcTrans)) {
             const fileTrans = srcTrans[filePath];
