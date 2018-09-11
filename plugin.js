@@ -1,7 +1,7 @@
 const {newVlang} = require('./lib/vlang');
 
 
-module.exports = {
+const Vlang = {
     install: function (Vue, options) {
         var vlang = newVlang();
         var t;
@@ -24,3 +24,5 @@ module.exports = {
         Vue.prototype.$t = t;
     }
 };
+
+export default Vlang;

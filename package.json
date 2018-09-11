@@ -1,7 +1,7 @@
 {
     "name": "vlang",
     "description": "An i18n system (and a vue-cli plugin)",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "author": "Rémy Sanchez (@xowap)",
     "license": "WTFPL",
     "main": "plugin.js",
@@ -15,6 +15,7 @@
     "dependencies": {
         "argparse": "^1.0.10",
         "cheerio": "^1.0.0-rc.2",
+        "eslint": "^5.5.0",
         "googleapis": "^32.0.0",
         "html-entities": "^1.2.1",
         "js-yaml": "^3.12.0",
