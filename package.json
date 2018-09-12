@@ -23,5 +23,8 @@
         "merge-options": "^1.0.1",
         "vue": "^2.5.16",
         "walk": "^2.3.14"
+    },
+    "devDependencies": {
+        "babel-plugin-transform-imports": "^1.5.1"
     }
 }
