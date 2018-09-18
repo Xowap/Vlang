@@ -71,7 +71,7 @@ function getGoogleContent(config, sheetId) {
             for (const row of trans) {
                 const isValid = row.Translation
                     && row.Key
-                    && row.Component.match(/\.vue$/);
+                    && row.Component.match(/\.(vue|js)$/);
 
                 const trans = applyFilters(config, locale, row.Translation);
 
