@@ -32,16 +32,13 @@ export default Vlang;
  * Use this to create a $t function inside a JS module. In any file that has
  * a VLANG block, use it like this:
  *
- * const $t = vljs(this);
+ * const $t = vljs(VLANG BLOCK GOES HERE);
  *
- * Internally, it expects to find the messages in `module_.__messages`, which
- * should be done by the vljs-loader.
- *
- * @param module_ {object} Module that has the messages embedded
+ * @param messages {array} Messages list
  */
-export function vljs(module_) {
+export function vljs(messages) {
     return function (key, n) {
-        const m = module_.__messages || [];
+        const m = messages || [];
         return vlang.translate(key, m, n);
     };
 }
