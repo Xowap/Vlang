@@ -1,5 +1,5 @@
 const {getOptions} = require('loader-utils');
-const {parseVljs} = require('./lib/parser');
+const {parseVljs, makeVljsRegExp} = require('./lib/parser');
 const {mergeTranslations} = require('./lib/utils');
 const {loadExternal} = require('./lib/loader');
 
@@ -40,9 +40,10 @@ module.exports = function (source, map) {
 
     Promise.all(tasks).then(
         (data) => {
-            const trans = mergeTranslations(data);
-            const out = (
-                `this.__messages = ${JSON.stringify(trans)};\n\n${source}`
+            const trans = mergeTranslations(data.filter(x => x));
+            const out = source.replace(
+                makeVljsRegExp(),
+                () => JSON.stringify(trans)
             );
 
             callback(null, out, map);
