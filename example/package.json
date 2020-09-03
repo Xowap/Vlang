@@ -1,0 +1,16 @@
+{
+    "name": "vlang-example",
+    "scripts": {
+        "dev": "nuxt",
+        "build": "nuxt build",
+        "generate": "nuxt generate",
+        "start": "nuxt start",
+        "trans-extract": "vlang-extract -r .",
+        "trans-import": "vlang-import -r ."
+    },
+    "dependencies": {
+        "less": "^3.12.2",
+        "less-loader": "^7.0.0",
+        "nuxt": "^2.14.3"
+    }
+}

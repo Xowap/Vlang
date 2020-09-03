@@ -1,0 +1,59 @@
+{
+    "type": "object",
+    "title": "title",
+    "properties": {
+        "locales": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "outputs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "pattern": "^google_sheets$"
+                    },
+                    "id": {
+                        "type": "string"
+                    }
+                },
+                "required": ["type", "id"]
+            }
+        },
+        "inputs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "pattern": "^google_sheets$"
+                    },
+                    "id": {
+                        "type": "string"
+                    }
+                },
+                "required": ["type", "id"]
+            }
+        },
+        "i18n_directory": {
+            "type": "string"
+        },
+        "filters": {
+            "type": "object",
+            "patternProperties": {
+                ".": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    },
+    "required": ["locales", "outputs", "i18n_directory"]
+}

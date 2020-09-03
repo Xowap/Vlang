@@ -1,0 +1,34 @@
+{
+    "description": "A Vlang messages block",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["lang", "messages"],
+        "properties": {
+            "lang": {
+                "type": "string"
+            },
+            "messages": {
+                "type": "object",
+                "patternProperties": {
+                    ".": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "patternProperties": {
+                                    "^(,!?\\d+|!?\\d+,|!?\\d+|!?\\d+,!?\\d+)$": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,7 +1,7 @@
-const yaml = require('js-yaml');
-const {getOptions} = require('loader-utils');
-const {mergeTranslations} = require('./lib/utils');
-const {loadExternal} = require('./lib/loader');
+const yaml = require("js-yaml");
+const { mergeTranslations, validateTransBlock } = require("../lib/utils");
+const { loadExternal } = require("../lib/loader");
+const Ajv = require("ajv");
 
 /**
  * Extracts messages from the source
@@ -12,7 +12,16 @@ function loadLocal(source) {
             const data = yaml.safeLoad(source);
 
             if (!data) {
-                return reject('Messages syntax does not seem valid');
+                return reject("Messages syntax does not seem valid");
+            }
+
+            if (!validateTransBlock(data)) {
+                return reject(
+                    new Error(
+                        `Could not validate messages block syntax.\n` +
+                            `${new Ajv().errorsText(validateTransBlock.errors)}`
+                    )
+                );
             }
 
             resolve(data);
@@ -23,12 +32,10 @@ function loadLocal(source) {
 }
 
 module.exports = function (source, map) {
+    const { rootContext, resourcePath } = this;
+    const context = rootContext || process.cwd();
     const callback = this.async();
-    const options = getOptions(this);
-    const tasks = [
-        loadLocal(source),
-        loadExternal(options.root, this.resourcePath),
-    ];
+    const tasks = [loadLocal(source), loadExternal(context, resourcePath)];
 
     Promise.all(tasks).then(
         (data) => {
@@ -42,6 +49,6 @@ module.exports = function (source, map) {
         },
         (err) => {
             callback(err);
-        },
+        }
     );
 };

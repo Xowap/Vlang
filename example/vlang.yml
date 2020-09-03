@@ -1,0 +1,19 @@
+---
+
+locales:
+    - en
+    - fr
+
+outputs:
+    - type: google_sheets
+      id: "1vxkEbYWM9Q93vuiPN-IA588OMJ1yWjzPib2b4cX2EBc"
+
+inputs:
+    - type: google_sheets
+      id: "1vxkEbYWM9Q93vuiPN-IA588OMJ1yWjzPib2b4cX2EBc"
+
+i18n_directory: ./i18n
+
+filters:
+    fr:
+        - frenchPunctuation

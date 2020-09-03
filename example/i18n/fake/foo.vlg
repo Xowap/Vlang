@@ -1,0 +1,7 @@
+- lang: ja
+  messages:
+    FOO: Foo-san
+    BAR:
+      ',!2': Bar
+      '2,': Bars
+    HELLO: Konnichiwa

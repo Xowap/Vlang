@@ -1,0 +1,11 @@
+- lang: fr
+  messages:
+    SIMPLE: Démo de Vlang !
+    COUNTER: "Compteur\_:"
+    OTHER: Aller voir l'autre page
+    COUNT:
+      ',!2': '{} patate'
+      '2,': '{} patates'
+    CURRENT_LANG: Langue actuelle
+    FRENCH: Français
+    ENGLISH: Anglais

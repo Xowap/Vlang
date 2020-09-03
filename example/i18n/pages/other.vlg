@@ -1,0 +1,6 @@
+- lang: en
+  messages:
+    OTHER: The Other Page
+- lang: fr
+  messages:
+    OTHER: L'Autre Page
