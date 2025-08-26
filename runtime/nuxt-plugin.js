@@ -1,93 +1,130 @@
 import Vue from "vue";
 import Cookies from "universal-cookie";
-import { Vlang } from "./runtime";
+import {Vlang} from "./runtime";
 
 /**
  * Nuxt plugin to load and inject Vlang.
  *
- * See inline comments for details.
+ * IMPORTANT (SSR memory fix):
+ * Do NOT register a *per-request* Vlang instance with `Vue.use(vlang)`.
+ * Vue 2 stores each plugin object in `Vue._installedPlugins`.
+ * Passing a fresh instance on every SSR request keeps growing that array.
  *
- * @param req
- * @param beforeNuxtRender
- * @param inject
+ * Instead:
+ *  1) Register a single, process-wide static Vue plugin once (defines `$t`).
+ *  2) Create a per-request `Vlang` instance and inject it as `$vlang`.
+ *  3) `$t` reads the instance from `this.$vlang` and uses the component’s `__messages`.
  */
-export default ({ req, beforeNuxtRender }, inject) => {
+
+/**
+ * Minimal helper: flatten { lang, messages } blocks into plain dicts.
+ * Input:
+ *   { es: { lang: 'es', messages: { EMAIL: 'Correo' } }, en: {...} }
+ * Output:
+ *   { es: { EMAIL: 'Correo' }, en: {...} }
+ */
+function flattenLocaleBlocks(map) {
+    if (!map || typeof map !== "object") return {};
+    const out = {};
+    for (const loc of Object.keys(map)) {
+        const v = map[loc];
+        out[loc] =
+            v && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "messages")
+                ? (v.messages || {})
+                : (v || {});
+    }
+    return out;
+}
+
+/**
+ * One-time, static Vue plugin (idempotent). It does NOT capture per-request objects.
+ * It only defines `$t`, which fetches the current request's `$vlang`
+ * and uses per-component `__messages`.
+ */
+const VLANG_VUE_PLUGIN = {
+    install(VueCtor) {
+        if (VueCtor.__vlang_plugin_installed) return; // idempotent
+        VueCtor.__vlang_plugin_installed = true;
+
+        VueCtor.prototype.$t = function (key, n) {
+            const opt = (this && this.$options) || {};
+            const path = "$options.__messages";
+            const raw = opt.__messages || {};                // your logs showed this is present
+            const messages = flattenLocaleBlocks(raw);       // flatten {lang, messages} -> plain dict
+            const locales = Object.keys(messages);
+            const firstLoc = locales[0];
+            const sampleKeys = firstLoc ? Object.keys(messages[firstLoc] || {}).slice(0, 8) : [];
+
+            const vlang = this.$vlang || (process.browser && window.__vlang) || null;
+
+            if (DEBUG) {
+                const name =
+                    opt.name ||
+                    this.$options._componentTag ||
+                    (this.$vnode && this.$vnode.tag) ||
+                    "Anonymous";
+            }
+
+            const out = vlang ? vlang.translate(key, n, messages) : (key ?? "");
+            if (DEBUG && out === key) {
+                console.warn("[Vlang/$t] Fallback to key:", key, "— check locale, messages and key.");
+            }
+            return out;
+        };
+    }
+};
+
+export default ({req, beforeNuxtRender}, inject) => {
+
     let cookies;
 
-    /**
-     * Gathers the cookies, either from the HTTP request (server-side) or
-     * just from the browser API.
-     */
+    // Cookies source (server vs browser)
     if (process.server) {
         cookies = new Cookies(req && req.headers && req.headers.cookie);
     } else {
         cookies = new Cookies();
     }
 
-    /**
-     * Getting the options from above. Since those options are provided through
-     * template by the Vlang module, the weird syntax here with the comments
-     * allows to make sure that the ID doesn't detect a syntax error but when
-     * the file is generated the option values are not within comments.
-     */
+    // Options injected by the module template
     const options = {
         /* <%= '*' + '/' %>
         locales: <%= JSON.stringify(options.locales) %>,
         cookieName: <%= JSON.stringify(options.cookieName) %>,
         <%= '/' + '*' %> */
     };
-
-    /**
-     * Recovers the locale from the cookies, if any
-     */
+    // Read cookie locale
     options.cookieLocale = cookies.get(options.cookieName);
 
-    /**
-     * If we're in a browser, we might also recover the locale from the vlang
-     * object left for us in the NUXT state.
-     */
+    // On client, pick SSR locale from nuxtState
     if (process.browser) {
         const serverVlang = (window.__NUXT__ || {}).vlang || {};
         options.ssrLocale = serverVlang.locale;
     }
 
-    /**
-     * Creating the instance of Vlang
-     */
+    // Per-request Vlang instance (NOT passed to Vue.use)
     const vlang = new Vlang(options);
 
-    /**
-     * Injecting the Vlang service into the Nuxt context
-     */
-    inject('vlang', vlang);
+    // Inject for components as this.$vlang
+    inject("vlang", vlang);
 
-    /**
-     * Listens to locale changes in order to set the cookies when that happens
-     */
-    vlang.vm.$on('locale-change', (locale) => {
+    // Keep cookie in sync
+    vlang.vm.$on("locale-change", (locale) => {
         cookies.set(options.cookieName, locale);
     });
 
-    /**
-     * If we're in a browser, store the vlang instance in a global variable
-     * to facilitate vljs's job
-     */
+    // On client, expose for helpers and toggle runtime logging
     if (process.browser) {
         window.__vlang = vlang;
+        window.__VLANG_DEBUG = DEBUG;
     }
 
-    /**
-     * Install vlang as a Vue plugin (to get the $t function working)
-     */
-    Vue.use(vlang);
+    // Install the static plugin once (defines $t)
+    Vue.use(VLANG_VUE_PLUGIN);
 
-    /**
-     * If we're on the server side, add the locale to the NUXT state for the
-     * front-end to be able to pick it up on load (see above).
-     */
+    // Push current locale to nuxtState so client can pick it up
     if (process.server && beforeNuxtRender) {
-        beforeNuxtRender(({ nuxtState }) => {
-            nuxtState.vlang = { locale: vlang.getLocale() };
+        beforeNuxtRender(({nuxtState}) => {
+            nuxtState.vlang = {locale: vlang.getLocale()};
         });
     }
 };
