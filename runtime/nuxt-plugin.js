@@ -1,130 +1,153 @@
 import Vue from "vue";
 import Cookies from "universal-cookie";
-import {Vlang} from "./runtime";
+import { Vlang } from "./runtime";
 
 /**
- * Nuxt plugin to load and inject Vlang.
+ * Nuxt plugin to load and inject Vlang (SSR-safe).
  *
- * IMPORTANT (SSR memory fix):
- * Do NOT register a *per-request* Vlang instance with `Vue.use(vlang)`.
- * Vue 2 stores each plugin object in `Vue._installedPlugins`.
- * Passing a fresh instance on every SSR request keeps growing that array.
- *
- * Instead:
- *  1) Register a single, process-wide static Vue plugin once (defines `$t`).
- *  2) Create a per-request `Vlang` instance and inject it as `$vlang`.
- *  3) `$t` reads the instance from `this.$vlang` and uses the component’s `__messages`.
+ * Key points (memory-safe):
+ *  - DO NOT call Vue.use(vlangInstance) per request.
+ *  - Install ONE static plugin that defines $t (idempotent).
+ *  - Create/inject a per-request Vlang and let $t read it via this.$vlang.
  */
 
-/**
- * Minimal helper: flatten { lang, messages } blocks into plain dicts.
- * Input:
- *   { es: { lang: 'es', messages: { EMAIL: 'Correo' } }, en: {...} }
- * Output:
- *   { es: { EMAIL: 'Correo' }, en: {...} }
- */
-function flattenLocaleBlocks(map) {
-    if (!map || typeof map !== "object") return {};
-    const out = {};
-    for (const loc of Object.keys(map)) {
-        const v = map[loc];
-        out[loc] =
-            v && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "messages")
-                ? (v.messages || {})
-                : (v || {});
-    }
-    return out;
+/* -------------------------- helpers -------------------------- */
+
+/** Return true iff a value is a plain object */
+function isObj(v) {
+	return v && typeof v === "object" && !Array.isArray(v);
 }
 
 /**
- * One-time, static Vue plugin (idempotent). It does NOT capture per-request objects.
- * It only defines `$t`, which fetches the current request's `$vlang`
- * and uses per-component `__messages`.
+ * Normalize component-level __messages into:
+ *   { [locale: string]: { [key: string]: string|Function } }
+ *
+ * Accepts:
+ *  - Flat dict:                { HELLO:"Hola" }
+ *  - Block with messages:      { lang:"es", messages:{ HELLO:"Hola" } }
+ *  - Map of locales (flat):    { es:{ HELLO:"Hola" }, en:{ HELLO:"Hello" } }
+ *  - Map of locales (blocks):  { es:{ lang:"es", messages:{...} }, en:{...} }
  */
-const VLANG_VUE_PLUGIN = {
-    install(VueCtor) {
-        if (VueCtor.__vlang_plugin_installed) return; // idempotent
-        VueCtor.__vlang_plugin_installed = true;
+function normalizeMessages(raw, currentLocale) {
+	if (!raw) return {};
 
-        VueCtor.prototype.$t = function (key, n) {
-            const opt = (this && this.$options) || {};
-            const path = "$options.__messages";
-            const raw = opt.__messages || {};                // your logs showed this is present
-            const messages = flattenLocaleBlocks(raw);       // flatten {lang, messages} -> plain dict
-            const locales = Object.keys(messages);
-            const firstLoc = locales[0];
-            const sampleKeys = firstLoc ? Object.keys(messages[firstLoc] || {}).slice(0, 8) : [];
+	// Case A: already a map of locales
+	//         { es:{...}, en:{...} }  OR  { es:{lang, messages}, ... }
+	const localeKeys = Object.keys(raw || {}).filter(k => typeof raw[k] !== "undefined");
+	const looksLikeLocaleMap =
+		localeKeys.length > 0 &&
+		localeKeys.every(k => isObj(raw[k]) || typeof raw[k] === "string" || typeof raw[k] === "function");
 
-            const vlang = this.$vlang || (process.browser && window.__vlang) || null;
+	if (looksLikeLocaleMap && (raw.es || raw.en || Object.keys(raw).some(k => k.includes("-")))) {
+		const out = {};
+		for (const loc of Object.keys(raw)) {
+			const v = raw[loc];
+			if (isObj(v) && Object.prototype.hasOwnProperty.call(v, "messages")) {
+				out[loc] = v.messages || {};
+			} else if (isObj(v)) {
+				out[loc] = v;
+			} else {
+				// unlikely, but keep shape valid
+				out[loc] = {};
+			}
+		}
+		return out;
+	}
 
-            if (DEBUG) {
-                const name =
-                    opt.name ||
-                    this.$options._componentTag ||
-                    (this.$vnode && this.$vnode.tag) ||
-                    "Anonymous";
-            }
+	// Case B: single block { lang, messages }
+	if (isObj(raw) && Object.prototype.hasOwnProperty.call(raw, "messages")) {
+		const lang = raw.lang || currentLocale || "en";
+		return { [lang]: raw.messages || {} };
+	}
 
-            const out = vlang ? vlang.translate(key, n, messages) : (key ?? "");
-            if (DEBUG && out === key) {
-                console.warn("[Vlang/$t] Fallback to key:", key, "— check locale, messages and key.");
-            }
-            return out;
-        };
-    }
+	// Case C: flat dict for current locale
+	if (isObj(raw)) {
+		const lang = currentLocale || "en";
+		return { [lang]: raw };
+	}
+
+	return {};
+}
+
+/* --------------------- static Vue plugin --------------------- */
+
+/**
+ * Defines `$t` exactly once per process. It does NOT capture per-request data.
+ * `$t` reads:
+ *   - component-local messages: this.$options.__messages
+ *   - current vlang instance:   this.$vlang  (injected below)
+ */
+const StaticVlangPlugin = {
+	install(VueCtor) {
+		if (VueCtor.prototype.$t) return; // idempotent
+
+		VueCtor.prototype.$t = function $t(key, n) {
+			// component-local messages (whatever the loader put there)
+			const raw = (this && this.$options && this.$options.__messages) || {};
+			// current vlang instance (injected in this plugin)
+			const vlang = this && this.$vlang
+				? this.$vlang
+				: (process.client && window.__vlang) || null;
+
+			if (!vlang) return key ?? "";
+
+			const messages = normalizeMessages(raw, vlang.getLocale());
+			return vlang.translate(key, n, messages);
+		};
+	}
 };
 
-export default ({req, beforeNuxtRender}, inject) => {
+// Install once per process (both server worker and client runtime)
+if (!Vue.__vlang_static_installed__) {
+	Vue.use(StaticVlangPlugin);
+	Object.defineProperty(Vue, "__vlang_static_installed__", { value: true, enumerable: false });
+}
 
-    let cookies;
+/* ------------------------ Nuxt plugin ------------------------ */
 
-    // Cookies source (server vs browser)
-    if (process.server) {
-        cookies = new Cookies(req && req.headers && req.headers.cookie);
-    } else {
-        cookies = new Cookies();
-    }
+export default ({ req, beforeNuxtRender }, inject) => {
+	// cookies: server vs client source
+	const cookies = process.server
+		? new Cookies(req && req.headers && req.headers.cookie)
+		: new Cookies();
 
-    // Options injected by the module template
-    const options = {
-        /* <%= '*' + '/' %>
-        locales: <%= JSON.stringify(options.locales) %>,
-        cookieName: <%= JSON.stringify(options.cookieName) %>,
-        <%= '/' + '*' %> */
-    };
-    // Read cookie locale
-    options.cookieLocale = cookies.get(options.cookieName);
+	// options injected by the module template
+	const options = {
+		/* <%= '*' + '/' %>
+		locales: <%= JSON.stringify(options.locales) %>,
+		cookieName: <%= JSON.stringify(options.cookieName) %>,
+		<%= '/' + '*' %> */
+	};
 
-    // On client, pick SSR locale from nuxtState
-    if (process.browser) {
-        const serverVlang = (window.__NUXT__ || {}).vlang || {};
-        options.ssrLocale = serverVlang.locale;
-    }
+	// cookie -> cookieLocale
+	options.cookieLocale = cookies.get(options.cookieName);
 
-    // Per-request Vlang instance (NOT passed to Vue.use)
-    const vlang = new Vlang(options);
+	// client picks SSR locale from nuxtState
+	if (process.client) {
+		const serverVlang = (window.__NUXT__ || {}).vlang || {};
+		options.ssrLocale = serverVlang.locale;
+	}
 
-    // Inject for components as this.$vlang
-    inject("vlang", vlang);
+	// per-request instance (SSR-safe; do NOT pass to Vue.use)
+	const vlang = new Vlang(options);
 
-    // Keep cookie in sync
-    vlang.vm.$on("locale-change", (locale) => {
-        cookies.set(options.cookieName, locale);
-    });
+	// keep cookie in sync
+	vlang.vm.$on("locale-change", (locale) => {
+		cookies.set(options.cookieName, locale);
+	});
 
-    // On client, expose for helpers and toggle runtime logging
-    if (process.browser) {
-        window.__vlang = vlang;
-        window.__VLANG_DEBUG = DEBUG;
-    }
+	// inject -> gives this.$vlang (also app/store/context.$vlang)
+	inject("vlang", vlang);
 
-    // Install the static plugin once (defines $t)
-    Vue.use(VLANG_VUE_PLUGIN);
+	// expose for non-Vue helpers (client)
+	if (process.client) {
+		window.__vlang = vlang;
+	}
 
-    // Push current locale to nuxtState so client can pick it up
-    if (process.server && beforeNuxtRender) {
-        beforeNuxtRender(({nuxtState}) => {
-            nuxtState.vlang = {locale: vlang.getLocale()};
-        });
-    }
+	// send current locale to nuxt state (SSR -> client bootstrap)
+	if (process.server && beforeNuxtRender) {
+		beforeNuxtRender(({ nuxtState }) => {
+			nuxtState.vlang = { locale: vlang.getLocale() };
+		});
+	}
 };
