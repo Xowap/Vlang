@@ -97,7 +97,20 @@ export class Vlang {
         const dict = this._resolveDict(messages);
         const sample = Object.keys(dict).slice(0, 10);
 
+        if (typeof n === "string") {
+            const newN = parseFloat(n);
+
+            if (!Number.isNaN(newN)) {
+                n = newN;
+            }
+        }
+
         let val = dict[key];
+
+        if (val == null) {
+            console.warn("[Vlang/runtime] missing key for locale:", this.locale, "key:", key);
+            return key;
+        }
 
         if (typeof val === "function") {
             try {
@@ -109,14 +122,107 @@ export class Vlang {
             }
         }
 
-        if (val == null) {
-            console.warn("[Vlang/runtime] missing key for locale:", this.locale, "key:", key);
-            return key;
+
+        if (typeof n === "number") {
+            if (typeof val === "string") {
+                console.warn (
+                    `!!! USING "${key}" AS PLURALIZABLE STRING, ` +
+                    `BUT IT's NOT !!!`
+                );
+                return key
+            }
+
+            console.log(typeof val, val, n)
+            return this.pluralize(val, n);
         }
+
 
         const out = String(val);
         return out;
     }
+    /**
+     * Tests if `n` is comprised inside the `range` which is a string
+     * in the vlang range format:
+     *
+     * - "1,2" is the range [1, 2]
+     * - "1," is [1, +inf]
+     * - ",1" is [-inf, 1]
+     * - ",!1" is [-inf, 1[
+     * - "1" is [1, 1]
+     *
+     * @param range {string} Vlang range
+     * @param n {number} Number to test
+     * @return {boolean} True if the number is in range
+     */
+    isInRange(range, n) {
+        function incl(a, b) {
+            return a <= b;
+        }
+
+        function excl(a, b) {
+            return a < b;
+        }
+
+        let opLower = incl,
+            opUpper = incl;
+
+        const parts = range.split(",").map((x, idx) => {
+            if (x === "") {
+                if (idx === 0) {
+                    return -Infinity;
+                } else {
+                    return Infinity;
+                }
+            }
+
+            let op;
+
+            if (x[0] === "!") {
+                x = x.substr(1);
+                op = excl;
+            } else {
+                op = incl;
+            }
+
+            if (idx === 0) {
+                opLower = op;
+            } else {
+                opUpper = op;
+            }
+
+            return parseInt(x, 10);
+        });
+
+        if (parts.some(isNaN) || parts.length > 2) {
+            return false;
+        }
+
+        if (parts.length === 1) {
+            parts.push(parts[0]);
+        }
+
+        return opLower(parts[0], n) && opUpper(n, parts[1]);
+    }
+
+    /**
+     * Returns the pluralized form of the message for `n`
+     *
+     * @param message {object} all the messages associated with their
+     *                         ranges
+     * @param n {number} number to pluralize for
+     * @return {string}
+     */
+    pluralize(message, n) {
+        let selected = "!!! MISSING (no pluralized options) !!!";
+
+        Object.keys(message).some((range) => {
+            selected = message[range];
+            return this.isInRange(range, n);
+        });
+
+        return selected.replace("{}", n);
+    }
+
 
     setLocale(locale) {
         if (!locale || locale === this.locale) return;
