@@ -1,137 +1,101 @@
-const Vue = require("vue").default || require("vue");
+import Vue from "vue";
+
 
 /**
- * The VM handles the reactive side of the Vlang instance. It's mainly just
- * storage of the current locale and some logic to establish the actual locale
- * to be used.
+ * Extract locale codes from the shapes your logs showed:
+ *  - Array of strings: ['es','en']
+ *  - Array of objects: [{ lang:'es' }, { lang:'en' }] or { code:'es' }
+ *  - Object map: { es:{...}, en:{...} }
  */
-function makeVm() {
-    return new Vue({
-        data() {
-            return {
-                /**
-                 * Available locales
-                 */
-                locales: [],
+function extractLocaleList(locales) {
+    const out = [];
+    if (!locales) return out;
 
-                /**
-                 * User-chosen locale (during this runtime)
-                 */
-                chosenLocale: null,
+    if (Array.isArray(locales)) {
+        for (const it of locales) {
+            if (typeof it === "string") out.push(it);
+            else if (it && typeof it === "object") {
+                if (typeof it.lang === "string") out.push(it.lang);
+                else if (typeof it.code === "string") out.push(it.code);
+            }
+        }
+        return out;
+    }
 
-                /**
-                 * Locale suggested by the server
-                 */
-                ssrLocale: null,
+    if (typeof locales === "object") {
+        return Object.keys(locales);
+    }
 
-                /**
-                 * Locale suggested by the cookies
-                 */
-                cookieLocale: null,
-            };
-        },
-
-        computed: {
-            /**
-             * Returns the current locale based on the priority of various
-             * suggestions we can receive
-             */
-            locale() {
-                const { sane } = this;
-                return (
-                    sane.chosenLocale ||
-                    sane.ssrLocale ||
-                    sane.cookieLocale ||
-                    this.defaultLocale
-                );
-            },
-
-            /**
-             * The default locale is the first of the list
-             */
-            defaultLocale() {
-                return this.locales[0];
-            },
-
-            /**
-             * Sanitizes locale suggestions by making sure that all of them
-             * are available within authorized locales.
-             */
-            sane() {
-                return {
-                    chosenLocale: this.sanitizeLocale(this.chosenLocale),
-                    ssrLocale: this.sanitizeLocale(this.ssrLocale),
-                    cookieLocale: this.sanitizeLocale(this.cookieLocale),
-                };
-            },
-        },
-
-        methods: {
-            /**
-             * Makes sure that the input value exists within the authorized
-             * locales list. If not, null is returned so that the locale
-             * selection falls back on another value.
-             *
-             * @param locale {String} Locale to test
-             */
-            sanitizeLocale(locale) {
-                if (this.locales.some((x) => x === locale)) {
-                    return locale;
-                }
-
-                return null;
-            },
-        },
-
-        watch: {
-            /**
-             * Watches locale changes in order to allow the plugin to be
-             * notified when the locale changes so that it can set the cookie
-             * appropriately.
-             */
-            locale(v) {
-                this.$emit("locale-change", v);
-            },
-        },
-    });
+    return out;
 }
 
-class Vlang {
-    constructor({ locales, cookieLocale, ssrLocale }) {
-        this.vm = makeVm();
-
-        this.vm.locales = locales;
-        this.vm.cookieLocale = cookieLocale;
-        this.vm.ssrLocale = ssrLocale;
+/**
+ * Flatten a `{ lang, messages }` block to just its `messages` object.
+ */
+function flattenBlockMaybe(v) {
+    if (v && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "messages")) {
+        return v.messages || {};
     }
+    return v || {};
+}
 
+export class Vlang {
     /**
-     * Installs the $t function into Vue. It cannot be injected into the Nuxt
-     * context because it needs to access the component's messages and as such
-     * can only be done as a Vue plugin.
+     * @param {Object} options
+     * @param {Object|Array} [options.locales]
+     * @param {string} [options.cookieName]
+     * @param {string} [options.cookieLocale]
+     * @param {string} [options.ssrLocale]
      */
-    install(Vue) {
-        const vlang = this;
+    constructor(options = {}) {
+        this.options = options;
 
-        Vue.prototype.$t = function (key, n) {
-            const messages = (this.$options || {}).__messages || {};
-            return vlang.translate(key, n, messages);
-        };
+        const configuredLocales = extractLocaleList(options.locales);
+        this.locale =
+            options.ssrLocale ||
+            options.cookieLocale ||
+            configuredLocales[0] ||
+            "en";
+
+        // Tiny Vue instance used only as an event emitter
+        this.vm = new Vue();
+    }
+
+    // Try exact, then dash-normalized, then base language
+    _localeCandidates(loc) {
+        if (!loc || typeof loc !== "string") return [];
+        const dash = loc.replace("_", "-");
+        const base = dash.split("-")[0];
+        const out = [loc];
+        if (dash !== loc) out.push(dash);
+        if (base && base !== dash) out.push(base);
+        return out;
+    }
+
+    _resolveDict(messages = {}) {
+        const cands = this._localeCandidates(this.locale);
+
+        for (const cand of cands) {
+            let m = messages[cand];
+            if (m) return flattenBlockMaybe(m);
+        }
+
+        // Fallback to English if present
+        let en = messages.en;
+        return flattenBlockMaybe(en);
     }
 
     /**
-     * Returns the translation string for the specified key
+     * Translate a key using the current locale.
      *
-     * @param key {String} Key to translate
-     * @param n {Number|Undefined} If defined, this number will be used to
-     *                             pluralize the translation. If a
-     *                             number is given, the message is expected
-     *                             to be in a pluralizable form.
-     * @param messages {Dict} Available messages
+     * @param {string} key
+     * @param {number|Object} [n]
+     * @param {Object} [messages={}] // expects object-of-locales (values can be dicts or {lang,messages} blocks)
+     * @returns {string}
      */
-    translate(key, n, messages) {
-        const message = (messages[this.getLocale()] || { messages: {} })
-            .messages[key];
+    translate(key, n, messages = {}) {
+        const dict = this._resolveDict(messages);
+        const sample = Object.keys(dict).slice(0, 10);
 
         if (typeof n === "string") {
             const newN = parseFloat(n);
@@ -141,29 +105,41 @@ class Vlang {
             }
         }
 
-        if (!message) {
-            return `!!! MISSING KEY "${key}" !!!`;
-        } else if (typeof n === "number") {
-            if (typeof message === "string") {
-                return (
+        let val = dict[key];
+
+        if (val == null) {
+            console.warn("[Vlang/runtime] missing key for locale:", this.locale, "key:", key);
+            return key;
+        }
+
+        if (typeof val === "function") {
+            try {
+                const out = val(n);
+                return out;
+            } catch (e) {
+                console.warn("[Vlang/runtime] message fn threw; falling back to key:", key, e);
+                return key;
+            }
+        }
+
+
+        if (typeof n === "number") {
+            if (typeof val === "string") {
+                console.warn (
                     `!!! USING "${key}" AS PLURALIZABLE STRING, ` +
                     `BUT IT's NOT !!!`
                 );
+                return key
             }
 
-            return this.pluralize(message, n);
-        } else {
-            if (typeof message !== "string") {
-                return (
-                    `!!! USING "${key}" AS REGULAR STRING, ` +
-                    `BUT IT'S PLURALIZABLE !!!`
-                );
-            }
-
-            return message;
+            console.log(typeof val, val, n)
+            return this.pluralize(val, n);
         }
-    }
 
+
+        const out = String(val);
+        return out;
+    }
     /**
      * Tests if `n` is comprised inside the `range` which is a string
      * in the vlang range format:
@@ -247,58 +223,36 @@ class Vlang {
         return selected.replace("{}", n);
     }
 
-    /**
-     * Returns the current locale
-     */
-    getLocale() {
-        return this.vm.locale;
-    }
 
-    /**
-     * Sets the current locale
-     */
     setLocale(locale) {
-        this.vm.chosenLocale = locale;
+        if (!locale || locale === this.locale) return;
+        this.locale = locale;
+        this.vm.$emit("locale-change", locale);
+    }
+
+    getLocale() {
+        return this.locale;
+    }
+
+    /**
+     * Legacy install (kept for non-SSR). Avoid using this on the server.
+     */
+    install(VueCtor) {
+        if (process && process.env && process.env.NODE_ENV !== "production") {
+            console.warn(
+                "[Vlang] Avoid `Vue.use(new Vlang(...))` on the server (SSR). " +
+                "Use the static plugin + injected `$vlang` pattern to prevent memory growth."
+            );
+        }
+
+        if (!VueCtor.prototype.$t) {
+            VueCtor.prototype.$t = function (key, n) {
+                const opt = (this && this.$options) || {};
+                // Pass raw __messages; we flatten blocks inside translate()
+                const raw = opt.__messages || {};
+                const vlang = this.$vlang || (process.client && window.__vlang) || null;
+                return vlang ? vlang.translate(key, n, raw) : (key ?? "");
+            };
+        }
     }
 }
-
-/**
- * Use this function from a raw JS file in order to use Vlang for translations
- * there.
- *
- * By example
- *
- *     import { vljs } from "vlang";
- *
- *     const $t = vljs(/ * VLANG
- *     - lang: en
- *       messages:
- *         HELLO: "Hello"
- *     * /);
- *
- * (Please note that the comment should be a comment but is
- * not because it would close this documentation comment).
- *
- * @param messages {Object} Messages that will be generated by the Webpack
- *                          loader from the comment
- * @param vlang {Vlang} Optional Vlang instance
- * @return {function(...[*]=)}
- */
-function vljs(messages, vlang) {
-    return function (key, n) {
-        if (!vlang && process.browser && window.__vlang) {
-            vlang = window.__vlang;
-        }
-
-        if (vlang) {
-            return vlang.translate(key, n, messages);
-        } else {
-            return "!!! COULD NOT GET VLANG INSTANCE !!!";
-        }
-    };
-}
-
-module.exports = {
-    Vlang,
-    vljs,
-};
